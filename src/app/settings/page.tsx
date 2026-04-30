@@ -13,12 +13,15 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { X } from "lucide-react";
+import { X, RefreshCw } from "lucide-react";
 
 export default function SettingsPage() {
   const currencies = useQuery(api.settings.getCurrencies);
   const setCurrencies = useMutation(api.settings.setCurrencies);
+  const exchangeRates = useQuery(api.settings.getExchangeRates);
+  const setExchangeRates = useMutation(api.settings.setExchangeRates);
   const [newCurrency, setNewCurrency] = useState("");
+  const [rateLoading, setRateLoading] = useState(false);
 
   const handleAdd = async () => {
     const code = newCurrency.trim().toUpperCase();
@@ -39,6 +42,24 @@ export default function SettingsPage() {
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter") handleAdd();
+  };
+
+  const handleFetchRates = async () => {
+    setRateLoading(true);
+    try {
+      const res = await fetch("/api/exchange-rates?base=KRW");
+      if (!res.ok) throw new Error();
+      const data = await res.json();
+      await setExchangeRates({
+        base: data.base,
+        rates: data.rates,
+        updatedAt: data.updatedAt,
+      });
+    } catch {
+      alert("환율 정보를 가져오는데 실패했습니다");
+    } finally {
+      setRateLoading(false);
+    }
   };
 
   return (
@@ -88,6 +109,64 @@ export default function SettingsPage() {
               추가
             </Button>
           </div>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-lg">환율 관리</CardTitle>
+              <CardDescription>
+                외화 자산의 KRW 환산에 사용되는 환율입니다
+              </CardDescription>
+            </div>
+            <Button
+              onClick={handleFetchRates}
+              variant="outline"
+              size="sm"
+              disabled={rateLoading}
+            >
+              <RefreshCw
+                className={`h-4 w-4 mr-2 ${rateLoading ? "animate-spin" : ""}`}
+              />
+              {rateLoading ? "갱신 중..." : "API 갱신"}
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {!exchangeRates ? (
+            <p className="text-sm text-muted-foreground">
+              환율 데이터가 없습니다. API 갱신 버튼을 눌러주세요.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              <div className="text-xs text-muted-foreground">
+                기준: {exchangeRates.base} · 갱신:{" "}
+                {new Date(exchangeRates.updatedAt).toLocaleString("ko-KR")}
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                {currencies
+                  ?.filter((c) => c !== "KRW")
+                  .map((code) => {
+                    const rate = exchangeRates.rates[code];
+                    const krwPerUnit = rate ? (1 / rate).toFixed(2) : "-";
+                    return (
+                      <div
+                        key={code}
+                        className="flex justify-between items-center p-2 bg-muted/50 rounded text-sm"
+                      >
+                        <span className="font-medium">{code}</span>
+                        <span className="font-mono text-muted-foreground">
+                          {krwPerUnit !== "-"
+                            ? `₩${Number(krwPerUnit).toLocaleString()}`
+                            : "-"}
+                        </span>
+                      </div>
+                    );
+                  })}
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>

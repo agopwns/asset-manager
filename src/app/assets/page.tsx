@@ -1,10 +1,15 @@
 "use client";
 
+import { useState, useCallback } from "react";
 import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { RefreshCw } from "lucide-react";
+import { formatCurrency } from "@/lib/currency";
+import { fetchAllPrices } from "@/lib/prices";
 
 const ASSET_TYPE_LABELS: Record<string, string> = {
   stock_us: "미국주식/ETF",
@@ -36,6 +41,9 @@ export default function AssetsPage() {
   const snapshots = useQuery(api.snapshots.list);
   const transactions = useQuery(api.assetTransactions.list);
   const accounts = useQuery(api.accounts.list);
+  const [livePrices, setLivePrices] = useState<Record<string, number>>({});
+  const [priceLoading, setPriceLoading] = useState(false);
+  const [priceUpdatedAt, setPriceUpdatedAt] = useState<string | null>(null);
 
   if (!snapshots || !transactions || !accounts) {
     return (
@@ -46,7 +54,29 @@ export default function AssetsPage() {
   }
 
   const accountMap = new Map(accounts.map((a) => [a._id, a]));
-  const holdings = calculateHoldings(snapshots, transactions);
+  const baseHoldings = calculateHoldings(snapshots, transactions);
+
+  const refreshPrices = async () => {
+    if (baseHoldings.length === 0) return;
+    setPriceLoading(true);
+    try {
+      const prices = await fetchAllPrices(baseHoldings);
+      setLivePrices(prices);
+      setPriceUpdatedAt(new Date().toLocaleTimeString("ko-KR"));
+    } catch {
+      // 실패 시 기존 값 유지
+    } finally {
+      setPriceLoading(false);
+    }
+  };
+
+  const holdings = baseHoldings.map((h) => {
+    const livePrice = livePrices[h.asset];
+    if (livePrice && (h.assetType === "stock_us" || h.assetType === "crypto")) {
+      return { ...h, currentValue: livePrice * h.quantity };
+    }
+    return h;
+  });
 
   // 계좌별 그룹
   const byAccount = holdings.reduce(
@@ -60,7 +90,27 @@ export default function AssetsPage() {
 
   return (
     <div className="space-y-6">
-      <h2 className="text-2xl font-bold">자산 목록</h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-2xl font-bold">자산 목록</h2>
+        <div className="flex items-center gap-2">
+          {priceUpdatedAt && (
+            <span className="text-xs text-muted-foreground">
+              시세 {priceUpdatedAt}
+            </span>
+          )}
+          <Button
+            onClick={refreshPrices}
+            variant="outline"
+            size="sm"
+            disabled={priceLoading}
+          >
+            <RefreshCw
+              className={`h-4 w-4 mr-1 ${priceLoading ? "animate-spin" : ""}`}
+            />
+            시세 갱신
+          </Button>
+        </div>
+      </div>
 
       {holdings.length === 0 ? (
         <Card>
@@ -236,10 +286,4 @@ function calculateHoldings(
   }
 
   return Array.from(map.values()).filter((h) => h.quantity > 0);
-}
-
-function formatCurrency(value: number, currency: string): string {
-  if (currency === "KRW") return `${value.toLocaleString()}원`;
-  if (currency === "USD") return `$${value.toLocaleString()}`;
-  return `${value.toLocaleString()} ${currency}`;
 }

@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useCallback } from "react";
 import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
@@ -10,11 +11,36 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { RefreshCw } from "lucide-react";
+import { convertToKRW, formatKRW, formatCurrency } from "@/lib/currency";
+import { fetchAllPrices } from "@/lib/prices";
 
 export default function Dashboard() {
   const snapshots = useQuery(api.snapshots.list);
   const transactions = useQuery(api.assetTransactions.list);
   const accounts = useQuery(api.accounts.list);
+  const exchangeRates = useQuery(api.settings.getExchangeRates);
+  const [livePrices, setLivePrices] = useState<Record<string, number>>({});
+  const [priceLoading, setPriceLoading] = useState(false);
+  const [priceUpdatedAt, setPriceUpdatedAt] = useState<string | null>(null);
+
+  const refreshPrices = useCallback(
+    async (holdings: { asset: string; assetType: string }[]) => {
+      if (holdings.length === 0) return;
+      setPriceLoading(true);
+      try {
+        const prices = await fetchAllPrices(holdings);
+        setLivePrices(prices);
+        setPriceUpdatedAt(new Date().toLocaleTimeString("ko-KR"));
+      } catch {
+        // 실패 시 기존 값 유지
+      } finally {
+        setPriceLoading(false);
+      }
+    },
+    [],
+  );
 
   if (!snapshots || !transactions || !accounts) {
     return (
@@ -25,9 +51,27 @@ export default function Dashboard() {
   }
 
   const accountMap = new Map(accounts.map((a) => [a._id, a]));
-  const holdings = calculateHoldings(snapshots, transactions, accountMap);
-  const totalValueKRW = holdings.reduce((sum, h) => sum + h.currentValue, 0);
-  const totalCostKRW = holdings.reduce((sum, h) => sum + h.totalCost, 0);
+  const baseHoldings = calculateHoldings(snapshots, transactions, accountMap);
+
+  // 실시간 시세 적용
+  const holdings = baseHoldings.map((h) => {
+    const livePrice = livePrices[h.asset];
+    if (livePrice && (h.assetType === "stock_us" || h.assetType === "crypto")) {
+      return { ...h, currentValue: livePrice * h.quantity };
+    }
+    return h;
+  });
+
+  const totalValueKRW = holdings.reduce(
+    (sum, h) =>
+      sum + convertToKRW(h.currentValue, h.currency, exchangeRates ?? null),
+    0,
+  );
+  const totalCostKRW = holdings.reduce(
+    (sum, h) =>
+      sum + convertToKRW(h.totalCost, h.currency, exchangeRates ?? null),
+    0,
+  );
   const totalReturn =
     totalCostKRW > 0
       ? ((totalValueKRW - totalCostKRW) / totalCostKRW) * 100
@@ -36,7 +80,9 @@ export default function Dashboard() {
   const byType = holdings.reduce(
     (acc, h) => {
       const label = ASSET_TYPE_LABELS[h.assetType] || h.assetType;
-      acc[label] = (acc[label] || 0) + h.currentValue;
+      acc[label] =
+        (acc[label] || 0) +
+        convertToKRW(h.currentValue, h.currency, exchangeRates ?? null);
       return acc;
     },
     {} as Record<string, number>,
@@ -45,7 +91,9 @@ export default function Dashboard() {
   const byAccount = holdings.reduce(
     (acc, h) => {
       const label = `${h.broker} · ${h.accountName}`;
-      acc[label] = (acc[label] || 0) + h.currentValue;
+      acc[label] =
+        (acc[label] || 0) +
+        convertToKRW(h.currentValue, h.currency, exchangeRates ?? null);
       return acc;
     },
     {} as Record<string, number>,
@@ -53,7 +101,27 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
-      <h2 className="text-2xl font-bold">대시보드</h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-2xl font-bold">대시보드</h2>
+        <div className="flex items-center gap-2">
+          {priceUpdatedAt && (
+            <span className="text-xs text-muted-foreground">
+              시세 {priceUpdatedAt}
+            </span>
+          )}
+          <Button
+            onClick={() => refreshPrices(baseHoldings)}
+            variant="outline"
+            size="sm"
+            disabled={priceLoading}
+          >
+            <RefreshCw
+              className={`h-4 w-4 mr-1 ${priceLoading ? "animate-spin" : ""}`}
+            />
+            시세 갱신
+          </Button>
+        </div>
+      </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card>
@@ -314,16 +382,4 @@ function calculateHoldings(
   }
 
   return Array.from(map.values()).filter((h) => h.quantity > 0);
-}
-
-function formatKRW(value: number): string {
-  if (value >= 100000000) return `${(value / 100000000).toFixed(1)}억원`;
-  if (value >= 10000) return `${(value / 10000).toFixed(0)}만원`;
-  return `${value.toLocaleString()}원`;
-}
-
-function formatCurrency(value: number, currency: string): string {
-  if (currency === "KRW") return `${value.toLocaleString()}원`;
-  if (currency === "USD") return `$${value.toLocaleString()}`;
-  return `${value.toLocaleString()} ${currency}`;
 }

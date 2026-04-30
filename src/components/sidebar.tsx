@@ -9,8 +9,10 @@ import {
   ArrowLeftRight,
   Download,
   Settings,
+  LogOut,
 } from "lucide-react";
 import { type LucideIcon } from "lucide-react";
+import { useRouter } from "next/navigation";
 
 const navItems: { href: string; label: string; icon: LucideIcon }[] = [
   { href: "/", label: "대시보드", icon: LayoutDashboard },
@@ -23,6 +25,13 @@ const navItems: { href: string; label: string; icon: LucideIcon }[] = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
+
+  const handleLogout = async () => {
+    await fetch("/api/auth/logout", { method: "POST" });
+    router.push("/login");
+    router.refresh();
+  };
 
   return (
     <aside className="w-60 border-r border-border bg-sidebar text-sidebar-foreground flex flex-col min-h-screen">
@@ -53,8 +62,14 @@ export function Sidebar() {
           );
         })}
       </nav>
-      <div className="p-4 border-t border-border text-xs text-muted-foreground">
-        Convex 공유: Snapsheet
+      <div className="p-4 border-t border-border">
+        <button
+          onClick={handleLogout}
+          className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors w-full"
+        >
+          <LogOut className="h-3.5 w-3.5" />
+          로그아웃
+        </button>
       </div>
     </aside>
   );
